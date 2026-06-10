@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>phishing detecter</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f7fb;
+      margin: 0;
+      padding: 24px;
+      color: #222;
+    }
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.08);
+      padding: 26px;
+    }
+    h1 { margin-top: 0; font-size: 28px; }
+    textarea {
+      width: 100%;
+      min-height: 90px;
+      padding: 14px;
+      border: 1px solid #ccd6e0;
+      border-radius: 12px;
+      font-size: 16px;
+      resize: vertical;
+    }
+    button {
+      margin-top: 14px;
+      padding: 13px 20px;
+      font-size: 16px;
+      border: none;
+      border-radius: 12px;
+      background: #2f80ed;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover { background: #1e62ce; }
+    .result {
+      margin-top: 22px;
+      padding: 20px;
+      border-radius: 16px;
+      background: #f1f7ff;
+    }
+    .badge {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-weight: bold;
+    }
+    .safe { background: #dff6e0; color: #166b2c; }
+    .caution { background: #fff4d1; color: #7d5800; }
+    .danger { background: #ffe0e0; color: #9e1b1b; }
+    ul { padding-left: 18px; }
+    .small-note { color: #555; font-size: 14px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Link Security Checker</h1>
+    <p>Paste a URL and get a basic security summary plus a risk score.</p>
+
+    <textarea id="urlInput" placeholder="https://example.com"></textarea>
+    <button id="checkBtn">Check Link</button>
+
+    <div id="result" class="result" style="display:none;"></div>
+  </div>
+
+  <script>
+    const suspiciousWords = [
+      "login", "verify", "secure", "account", "update",
+      "bank", "paypal", "confirm", "reset", "support",
+      "free", "bonus", "earn", "winner", "click", "ebook"
+    ];
+
+    const blacklistHosts = [
+      "malware-test-site.com",
+      "phishing-example.net",
+      "badsite.example",
+      "xn--80ak6aa92e.com"
+    ];
+
+    function parseUrl(input) {
+      const trimmed = input.trim();
+      if (!trimmed) return null;
+      const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : "https://" + trimmed;
+      try {
+        return new URL(normalized);
+      } catch {
+        return null;
+      }
+    }
+
+    function scoreUrl(url) {
+      let score = 100;
+      const details = [];
+
+      if (url.protocol !== "https:") {
+        score -= 30;
+        details.push("Not using HTTPS. This is less secure and may expose data.");
+      } else {
+        details.push("HTTPS detected.");
+      }
+
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(url.hostname)) {
+        score -= 20;
+        details.push("URL uses an IPv4 address instead of a domain name.");
+      }
+
+      if (url.hostname.length > 30) {
+        score -= 10;
+        details.push("Very long hostname may indicate a suspicious or phishing domain.");
+      }
+
+      if (url.hostname.split(".").length > 4) {
+        score -= 10;
+        details.push("Many subdomains may be used to hide a malicious host.");
+      }
+
+      if (url.href.toLowerCase().includes("login.php") || url.href.toLowerCase().includes("signin")) {
+        score -= 8;
+        details.push("Login-like path detected.");
+      }
+
+      suspiciousWords.forEach(word => {
+        if (url.href.toLowerCase().includes(word)) {
+          score -= 5;
+          details.push(`Suspicious keyword found: "${word}".`);
+        }
+      });
+
+      if (blacklistHosts.includes(url.hostname.toLowerCase())) {
+        score -= 40;
+        details.push("Host is on a local blacklist of known suspicious domains.");
+      }
+
+      if (url.hostname.includes("xn--")) {
+        score -= 18;
+        details.push("Punycode domain detected; this can be used for IDN spoofing.");
+      }
+
+      return { score: Math.max(0, Math.min(100, score)), details };
+    }
+
+    function riskLabel(score) {
+      if (score >= 75) return { text: "Low risk", className: "safe" };
+      if (score >= 45) return { text: "Medium risk", className: "caution" };
+      return { text: "High risk", className: "danger" };
+    }
+
+    async function testCrossOrigin(url) {
+      try {
+        const response = await fetch(url.href, { method: "HEAD", mode: "cors" });
+        const allowed = response.headers.get("access-control-allow-origin");
+        if (allowed && allowed !== "null") {
+          return {
+            status: "ok",
+            detail: "Server allows cross-origin requests."
+          };
+        }
+        return {
+          status: "limited",
+          detail: "Server does not expose CORS headers to this page."
+        };
+      } catch (error) {
+        if (error.name === "TypeError") {
+          return {
+            status: "blocked",
+            detail: "Cross-origin request blocked or site not reachable from the browser."
+          };
+        }
+        return {
+          status: "error",
+          detail: "Unable to test cross-origin access: " + error.message
+        };
+      }
+    }
+
+    function renderResult(url, analysis, corsResult) {
+      const label = riskLabel(analysis.score);
+      const additional = [];
+
+      additional.push("SSL certificate verification is not available in browser-only code.");
+      additional.push("Domain age / WHOIS requires a backend service or external API.");
+      additional.push("Google Safe Browsing lookup requires an API key and server-side request.");
+
+      document.getElementById("result").style.display = "block";
+      document.getElementById("result").innerHTML = `
+        <strong>URL:</strong> ${url.href}<br/>
+        <strong>Host:</strong> ${url.hostname}<br/>
+        <strong>Risk score:</strong>
+        <span class="badge ${label.className}">${analysis.score}% — ${label.text}</span>
+        <h3>Analysis details</h3>
+        <ul>${analysis.details.map(d => `<li>${d}</li>`).join("")}</ul>
+        <h3>Cross-origin/CORS</h3>
+        <p>${corsResult.detail}</p>
+        <h3>Additional checks</h3>
+        <ul>${additional.map(item => `<li>${item}</li>`).join("")}</ul>
+        <p class="small-note">
+          Note: for production use, add a backend service to verify SSL certificate details, query WHOIS/domain age,
+          and use Google Safe Browsing or a threat-intelligence blacklist.
+        </p>
+      `;
+    }
+
+    document.getElementById("checkBtn").addEventListener("click", async () => {
+      const input = document.getElementById("urlInput").value;
+      const url = parseUrl(input);
+      const resultEl = document.getElementById("result");
+
+      if (!url) {
+        resultEl.style.display = "block";
+        resultEl.innerHTML = "<strong>Invalid URL.</strong> Please enter a valid link.";
+        return;
+      }
+
+      const analysis = scoreUrl(url);
+      const corsResult = await testCrossOrigin(url);
+      renderResult(url, analysis, corsResult);
+    });
+  </script>
+</body>
+</html>
